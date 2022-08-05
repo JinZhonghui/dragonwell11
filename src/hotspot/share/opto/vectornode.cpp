@@ -397,7 +397,6 @@ VectorNode* VectorNode::make(int opc, Node* n1, Node* n2, uint vlen, BasicType b
 
   case Op_RoundDoubleModeV: return new RoundDoubleModeVNode(n1, n2, vt);
 
-  case Op_MulAddVS2VI: return new MulAddVS2VINode(n1, n2, vt);
   default:
     fatal("Missed vector creation for '%s'", NodeClassNames[vopc]);
     return NULL;
