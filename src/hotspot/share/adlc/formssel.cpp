@@ -757,7 +757,6 @@ int InstructForm::memory_operand(FormDict &globals) const {
   return NO_MEMORY_OPERAND;
 }
 
-
 // This instruction captures the machine-independent bottom_type
 // Expected use is for pointer vs oop determination for LoadP
 bool InstructForm::captures_bottom_type(FormDict &globals) const {
@@ -774,13 +773,14 @@ bool InstructForm::captures_bottom_type(FormDict &globals) const {
        !strcmp(_matrule->_rChild->_opType,"CheckCastPP")  ||
        !strcmp(_matrule->_rChild->_opType,"GetAndSetP")   ||
        !strcmp(_matrule->_rChild->_opType,"GetAndSetN")   ||
+       !strcmp(_matrule->_rChild->_opType,"RotateLeft")   ||
+       !strcmp(_matrule->_rChild->_opType,"RotateRight")   ||
 #if INCLUDE_SHENANDOAHGC
        !strcmp(_matrule->_rChild->_opType,"ShenandoahCompareAndExchangeP") ||
        !strcmp(_matrule->_rChild->_opType,"ShenandoahCompareAndExchangeN") ||
 #endif
-       !strcmp(_matrule->_rChild->_opType,"StrInflatedCopy") ||
        !strcmp(_matrule->_rChild->_opType,"CompareAndExchangeP") ||
-       !strcmp(_matrule->_rChild->_opType,"CompareAndExchangeN")))  return true;
+       !strcmp(_matrule->_rChild->_opType,"CompareAndExchangeN"))) return true;
   else if ( is_ideal_load() == Form::idealP )                return true;
   else if ( is_ideal_store() != Form::none  )                return true;
 
@@ -1045,11 +1045,7 @@ uint  InstructForm::reloc(FormDict &globals) {
     const char  *opType   = NULL;
     while (_matrule->base_operand(position, globals, result, name, opType)) {
       if ( strcmp(opType,"ConP") == 0 ) {
-#ifdef SPARC
-        reloc_entries += 2; // 1 for sethi + 1 for setlo
-#else
         ++reloc_entries;
-#endif
       }
       ++position;
     }
@@ -1083,13 +1079,7 @@ uint  InstructForm::reloc(FormDict &globals) {
   // Check for any component being an immediate float or double.
   Form::DataType data_type = is_chain_of_constant(globals);
   if( data_type==idealD || data_type==idealF ) {
-#ifdef SPARC
-    // sparc required more relocation entries for floating constants
-    // (expires 9/98)
-    reloc_entries += 6;
-#else
     reloc_entries++;
-#endif
   }
 
   return reloc_entries;
@@ -1361,7 +1351,7 @@ void InstructForm::set_unique_opnds() {
     // component back to an index and any DEF always goes at 0 so the
     // length of the array has to be the number of components + 1.
     _uniq_idx_length = _components.count() + 1;
-    uniq_idx = (uint*) malloc(sizeof(uint) * _uniq_idx_length);
+    uniq_idx = (uint*) AllocateHeap(sizeof(uint) * _uniq_idx_length);
     for (i = 0; i < _uniq_idx_length; i++) {
       uniq_idx[i] = i;
     }
@@ -1510,7 +1500,7 @@ Predicate *InstructForm::build_predicate() {
 
   MatchNode *mnode =
     strcmp(_matrule->_opType, "Set") ? _matrule : _matrule->_rChild;
-  mnode->count_instr_names(names);
+  if (mnode != NULL) mnode->count_instr_names(names);
 
   uint first = 1;
   // Start with the predicate supplied in the .ad file.
@@ -1524,7 +1514,6 @@ Predicate *InstructForm::build_predicate() {
   for( DictI i(&names); i.test(); ++i ) {
     uintptr_t cnt = (uintptr_t)i._value;
     if( cnt > 1 ) {             // Need a predicate at all?
-      int path_bitmask = 0;
       assert( cnt == 2, "Unimplemented" );
       // Handle many pairs
       if( first ) first=0;
@@ -1535,10 +1524,10 @@ Predicate *InstructForm::build_predicate() {
       // Add predicate to working buffer
       sprintf(s,"/*%s*/(",(char*)i._key);
       s += strlen(s);
-      mnode->build_instr_pred(s,(char*)i._key, 0, path_bitmask, 0);
+      mnode->build_instr_pred(s,(char*)i._key,0);
       s += strlen(s);
       strcpy(s," == "); s += strlen(s);
-      mnode->build_instr_pred(s,(char*)i._key, 1, path_bitmask, 0);
+      mnode->build_instr_pred(s,(char*)i._key,1);
       s += strlen(s);
       strcpy(s,")"); s += strlen(s);
     }
@@ -1724,26 +1713,25 @@ bool Opcode::print_opcode(FILE *fp, Opcode::opcode_type desired_opcode) {
   const char *description = NULL;
   const char *value       = NULL;
   // Check if user provided any opcode definitions
-  if( this != NULL ) {
-    // Update 'value' if user provided a definition in the instruction
-    switch (desired_opcode) {
-    case PRIMARY:
-      description = "primary()";
-      if( _primary   != NULL)  { value = _primary;     }
-      break;
-    case SECONDARY:
-      description = "secondary()";
-      if( _secondary != NULL ) { value = _secondary;   }
-      break;
-    case TERTIARY:
-      description = "tertiary()";
-      if( _tertiary  != NULL ) { value = _tertiary;    }
-      break;
-    default:
-      assert( false, "ShouldNotReachHere();");
-      break;
-    }
+  // Update 'value' if user provided a definition in the instruction
+  switch (desired_opcode) {
+  case PRIMARY:
+    description = "primary()";
+    if( _primary   != NULL)  { value = _primary;     }
+    break;
+  case SECONDARY:
+    description = "secondary()";
+    if( _secondary != NULL ) { value = _secondary;   }
+    break;
+  case TERTIARY:
+    description = "tertiary()";
+    if( _tertiary  != NULL ) { value = _tertiary;    }
+    break;
+  default:
+    assert( false, "ShouldNotReachHere();");
+    break;
   }
+
   if (value != NULL) {
     fprintf(fp, "(%s /*%s*/)", value, description);
   }
@@ -3411,7 +3399,6 @@ const char *MatchNode::reduce_left(FormDict &globals) const {
 // Count occurrences of operands names in the leaves of the instruction
 // match rule.
 void MatchNode::count_instr_names( Dict &names ) {
-  if( this == NULL ) return;
   if( _lChild ) _lChild->count_instr_names(names);
   if( _rChild ) _rChild->count_instr_names(names);
   if( !_lChild && !_rChild ) {
@@ -3424,35 +3411,21 @@ void MatchNode::count_instr_names( Dict &names ) {
 //------------------------------build_instr_pred-------------------------------
 // Build a path to 'name' in buf.  Actually only build if cnt is zero, so we
 // can skip some leading instances of 'name'.
-int MatchNode::build_instr_pred( char *buf, const char *name, int cnt, int path_bitmask, int level) {
+int MatchNode::build_instr_pred( char *buf, const char *name, int cnt ) {
   if( _lChild ) {
-    cnt = _lChild->build_instr_pred(buf, name, cnt, path_bitmask, level+1);
-    if( cnt < 0 ) {
-      return cnt;   // Found it, all done
-    }
+    if( !cnt ) strcpy( buf, "_kids[0]->" );
+    cnt = _lChild->build_instr_pred( buf+strlen(buf), name, cnt );
+    if( cnt < 0 ) return cnt;   // Found it, all done
   }
   if( _rChild ) {
-    path_bitmask |= 1 << level;
-    cnt = _rChild->build_instr_pred( buf, name, cnt, path_bitmask, level+1);
-    if( cnt < 0 ) {
-      return cnt;   // Found it, all done
-    }
+    if( !cnt ) strcpy( buf, "_kids[1]->" );
+    cnt = _rChild->build_instr_pred( buf+strlen(buf), name, cnt );
+    if( cnt < 0 ) return cnt;   // Found it, all done
   }
   if( !_lChild && !_rChild ) {  // Found a leaf
     // Wrong name?  Give up...
     if( strcmp(name,_name) ) return cnt;
-    if( !cnt )  {
-      for(int i = 0; i < level; i++) {
-        int kid = path_bitmask &  (1 << i);
-        if (0 == kid) {
-          strcpy( buf, "_kids[0]->" );
-        } else {
-          strcpy( buf, "_kids[1]->" );
-        }
-        buf += 10;
-      }
-      strcpy( buf, "_leaf" );
-    }
+    if( !cnt ) strcpy(buf,"_leaf");
     return cnt-1;
   }
   return cnt;
@@ -3472,7 +3445,7 @@ void MatchNode::build_internalop( ) {
   rstr = (_rChild) ? ((_rChild->_internalop) ?
                        _rChild->_internalop : _rChild->_opType) : "";
   len += (int)strlen(lstr) + (int)strlen(rstr);
-  subtree = (char *)malloc(len);
+  subtree = (char *)AllocateHeap(len);
   sprintf(subtree,"_%s_%s_%s", _opType, lstr, rstr);
   // Hash the subtree string in _internalOps; if a name exists, use it
   iop = (char *)_AD._internalOps[subtree];
@@ -3511,7 +3484,7 @@ int MatchNode::needs_ideal_memory_edge(FormDict &globals) const {
     "StoreB","StoreC","Store" ,"StoreFP",
     "LoadI", "LoadL", "LoadP" ,"LoadN", "LoadD" ,"LoadF"  ,
     "LoadB" , "LoadUB", "LoadUS" ,"LoadS" ,"Load" ,
-    "StoreVector", "LoadVector",
+    "StoreVector", "LoadVector", "LoadVectorGather", "StoreVectorScatter",
     "LoadRange", "LoadKlass", "LoadNKlass", "LoadL_unaligned", "LoadD_unaligned",
     "LoadPLocked",
     "StorePConditional", "StoreIConditional", "StoreLConditional",
@@ -3528,6 +3501,12 @@ int MatchNode::needs_ideal_memory_edge(FormDict &globals) const {
   };
   int cnt = sizeof(needs_ideal_memory_list)/sizeof(char*);
   if( strcmp(_opType,"PrefetchAllocation")==0 )
+    return 1;
+  if( strcmp(_opType,"CacheWB")==0 )
+    return 1;
+  if( strcmp(_opType,"CacheWBPreSync")==0 )
+    return 1;
+  if( strcmp(_opType,"CacheWBPostSync")==0 )
     return 1;
   if( _lChild ) {
     const char *opType = _lChild->_opType;
@@ -3822,6 +3801,7 @@ void MatchNode::count_commutative_op(int& count) {
     "MaxV", "MinV",
     "MulI","MulL","MulF","MulD",
     "MulVB","MulVS","MulVI","MulVL","MulVF","MulVD",
+    "MinV","MaxV",
     "OrI","OrL",
     "OrV",
     "XorI","XorL",
@@ -3889,7 +3869,7 @@ void MatchRule::matchrule_swap_commutative_op(const char* instr_ident, int count
   MatchRule* clone = new MatchRule(_AD, this);
   // Swap operands of commutative operation
   ((MatchNode*)clone)->swap_commutative_op(true, count);
-  char* buf = (char*) malloc(strlen(instr_ident) + 4);
+  char* buf = (char*) AllocateHeap(strlen(instr_ident) + 4);
   sprintf(buf, "%s_%d", instr_ident, match_rules_cnt++);
   clone->_result = buf;
 
@@ -3963,6 +3943,8 @@ bool MatchRule::is_base_register(FormDict &globals) const {
          strcmp(opType,"RegL")==0 ||
          strcmp(opType,"RegF")==0 ||
          strcmp(opType,"RegD")==0 ||
+         strcmp(opType,"RegVMask")==0 ||
+         strcmp(opType,"VecA")==0 ||
          strcmp(opType,"VecS")==0 ||
          strcmp(opType,"VecD")==0 ||
          strcmp(opType,"VecX")==0 ||
@@ -4072,6 +4054,11 @@ int MatchRule::is_expensive() const {
         strcmp(opType,"MulReductionVL")==0 ||
         strcmp(opType,"MulReductionVF")==0 ||
         strcmp(opType,"MulReductionVD")==0 ||
+        strcmp(opType,"MinReductionV")==0 ||
+        strcmp(opType,"MaxReductionV")==0 ||
+        strcmp(opType,"AndReductionV")==0 ||
+        strcmp(opType,"OrReductionV")==0 ||
+        strcmp(opType,"XorReductionV")==0 ||
         0 /* 0 to line up columns nicely */ )
       return 1;
   }
@@ -4165,8 +4152,9 @@ bool MatchRule::is_vector() const {
     "MulVB","MulVS","MulVI","MulVL","MulVF","MulVD",
     "CMoveVD", "CMoveVF",
     "DivVF","DivVD",
+    "MinV","MaxV",
     "AbsVB","AbsVS","AbsVI","AbsVL","AbsVF","AbsVD",
-    "NegVF","NegVD",
+    "NegVF","NegVD","NegVI",
     "SqrtVD","SqrtVF",
     "AndV" ,"XorV" ,"OrV",
     "MaxV", "MinV",
@@ -4174,13 +4162,21 @@ bool MatchRule::is_vector() const {
     "AddReductionVF", "AddReductionVD",
     "MulReductionVI", "MulReductionVL",
     "MulReductionVF", "MulReductionVD",
+    "MaxReductionV", "MinReductionV",
+    "AndReductionV", "OrReductionV", "XorReductionV",
+    "MulAddVS2VI", "MacroLogicV",
     "LShiftCntV","RShiftCntV",
     "LShiftVB","LShiftVS","LShiftVI","LShiftVL",
     "RShiftVB","RShiftVS","RShiftVI","RShiftVL",
     "URShiftVB","URShiftVS","URShiftVI","URShiftVL",
-    "MaxReductionV", "MinReductionV",
     "ReplicateB","ReplicateS","ReplicateI","ReplicateL","ReplicateF","ReplicateD",
-    "RoundDoubleModeV","LoadVector","StoreVector",
+    "RoundDoubleModeV","RotateLeftV" , "RotateRightV", "LoadVector","StoreVector",
+    "LoadVectorGather", "StoreVectorScatter",
+    "VectorTest", "VectorLoadMask", "VectorStoreMask", "VectorBlend", "VectorInsert",
+    "VectorRearrange","VectorLoadShuffle", "VectorLoadConst",
+    "VectorCastB2X", "VectorCastS2X", "VectorCastI2X",
+    "VectorCastL2X", "VectorCastF2X", "VectorCastD2X",
+    "VectorMaskWrapper", "VectorMaskCmp", "VectorReinterpret",
     "FmaVD", "FmaVF","PopCountVI",
     // Next are not supported currently.
     "PackB","PackS","PackI","PackL","PackF","PackD","Pack2L","Pack2D",
