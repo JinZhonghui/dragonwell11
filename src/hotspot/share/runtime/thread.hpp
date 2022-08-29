@@ -937,6 +937,7 @@ class JavaThread: public Thread {
   friend class VMStructs;
   friend class JVMCIVMStructs;
   friend class WhiteBox;
+  friend class WispThread;
  private:
   JavaThread*    _next;                          // The next thread in the Threads list
   bool           _on_thread_list;                // Is set when this JavaThread is added to the Threads list
@@ -1866,6 +1867,7 @@ class JavaThread: public Thread {
 
   // Misc. operations
   char* name() const { return (char*)get_thread_name(); }
+  static const char* name_for(oop thread_obj);
   void print_on(outputStream* st, bool print_extended_info) const;
   void print_on(outputStream* st) const { print_on(st, false); }
   void print_value();
