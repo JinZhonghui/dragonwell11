@@ -564,7 +564,7 @@ bool VectorNode::is_vector_shift(int opc) {
   }
 }
 
-bool VectorNode::is_shift_count(int opc) {
+bool VectorNode::is_vector_shift_count(int opc) {
   assert(opc > _last_machine_leaf && opc < _last_opcode, "invalid opcode");
   switch (opc) {
   case Op_RShiftCntV:
