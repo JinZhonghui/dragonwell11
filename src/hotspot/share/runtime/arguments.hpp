@@ -485,6 +485,7 @@ class Arguments : AllStatic {
   static char*  SharedArchivePath;
 
  public:
+  static void check_arguments_for_riscv64();
   // Parses the arguments, first phase
   static jint parse(const JavaVMInitArgs* args);
   // Parse a string for a unsigned integer.  Returns true if value
@@ -665,4 +666,16 @@ do {                                                     \
   }                                                      \
 } while(0)
 
-#endif // SHARE_VM_RUNTIME_ARGUMENTS_HPP
+// similar to UNSUPPORTED_OPTION but sets flag to NULL
+#define UNSUPPORTED_OPTION_NULL(opt)                     \
+do {                                                     \
+  if (opt) {                                             \
+    if (FLAG_IS_CMDLINE(opt)) {                          \
+      warning("-XX flag " #opt " not supported in this VM"); \
+    }                                                    \
+    FLAG_SET_DEFAULT(opt, NULL);                         \
+  }                                                      \
+} while(0)
+
+
+#endif // SHARE_RUNTIME_ARGUMENTS_HPP
