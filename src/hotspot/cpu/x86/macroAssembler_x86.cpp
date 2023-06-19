@@ -3498,18 +3498,18 @@ void MacroAssembler::movq(XMMRegister dst, AddressLiteral src) {
 }
 
 #ifdef COMPILER2
-void MacroAssembler::setvectmask(Register dst, Register src) {
+void MacroAssembler::setvectmask(Register dst, Register src, KRegister mask) {
   guarantee(PostLoopMultiversioning, "must be");
   Assembler::movl(dst, 1);
   Assembler::shlxl(dst, dst, src);
   Assembler::decl(dst);
-  Assembler::kmovdl(k1, dst);
+  Assembler::kmovdl(mask, dst);
   Assembler::movl(dst, src);
 }
 
-void MacroAssembler::restorevectmask() {
+void MacroAssembler::restorevectmask(KRegister mask) {
   guarantee(PostLoopMultiversioning, "must be");
-  Assembler::knotwl(k1, k0);
+  Assembler::knotwl(mask, k0);
 }
 #endif // COMPILER2
 
@@ -3605,6 +3605,59 @@ void MacroAssembler::vmovdqu(XMMRegister dst, AddressLiteral src, Register scrat
   }
 }
 
+void MacroAssembler::kmov(KRegister dst, Address src) {
+  if (VM_Version::supports_avx512bw()) {
+    kmovql(dst, src);
+  } else {
+    assert(VM_Version::supports_evex(), "");
+    kmovwl(dst, src);
+  }
+}
+
+void MacroAssembler::kmov(Address dst, KRegister src) {
+  if (VM_Version::supports_avx512bw()) {
+    kmovql(dst, src);
+  } else {
+    assert(VM_Version::supports_evex(), "");
+    kmovwl(dst, src);
+  }
+}
+
+void MacroAssembler::kmov(KRegister dst, KRegister src) {
+  if (VM_Version::supports_avx512bw()) {
+    kmovql(dst, src);
+  } else {
+    assert(VM_Version::supports_evex(), "");
+    kmovwl(dst, src);
+  }
+}
+
+void MacroAssembler::kmov(Register dst, KRegister src) {
+  if (VM_Version::supports_avx512bw()) {
+    kmovql(dst, src);
+  } else {
+    assert(VM_Version::supports_evex(), "");
+    kmovwl(dst, src);
+  }
+}
+
+void MacroAssembler::kmov(KRegister dst, Register src) {
+  if (VM_Version::supports_avx512bw()) {
+    kmovql(dst, src);
+  } else {
+    assert(VM_Version::supports_evex(), "");
+    kmovwl(dst, src);
+  }
+}
+
+void MacroAssembler::kmovql(KRegister dst, AddressLiteral src, Register scratch_reg) {
+  if (reachable(src)) {
+    kmovql(dst, as_Address(src));
+  } else {
+    lea(scratch_reg, src);
+    kmovql(dst, Address(scratch_reg, 0));
+  }
+}
 
 void MacroAssembler::kmovwl(KRegister dst, AddressLiteral src, Register scratch_reg) {
   if (reachable(src)) {
@@ -6806,7 +6859,7 @@ void MacroAssembler::load_next_elements(Register elem1, Register elem2, Register
 // Compare strings, used for char[] and byte[].
 void MacroAssembler::string_compare(Register str1, Register str2,
                                     Register cnt1, Register cnt2, Register result,
-                                    XMMRegister vec1, int ae) {
+                                    XMMRegister vec1, int ae, KRegister mask) {
   ShortBranchVerifier sbv(this);
   Label LENGTH_DIFF_LABEL, POP_LABEL, DONE_LABEL, WHILE_HEAD_LABEL;
   Label COMPARE_WIDE_VECTORS_LOOP_FAILED;  // used only _LP64 && AVX3
@@ -6959,12 +7012,12 @@ void MacroAssembler::string_compare(Register str1, Register str2,
       bind(COMPARE_WIDE_VECTORS_LOOP_AVX3); // the hottest loop
       if (ae == StrIntrinsicNode::LL || ae == StrIntrinsicNode::UU) {
         evmovdquq(vec1, Address(str1, result, scale), Assembler::AVX_512bit);
-        evpcmpeqb(k7, vec1, Address(str2, result, scale), Assembler::AVX_512bit); // k7 == 11..11, if operands equal, otherwise k7 has some 0
+        evpcmpeqb(mask, vec1, Address(str2, result, scale), Assembler::AVX_512bit); // k7 == 11..11, if operands equal, otherwise k7 has some 0
       } else {
         vpmovzxbw(vec1, Address(str1, result, scale1), Assembler::AVX_512bit);
-        evpcmpeqb(k7, vec1, Address(str2, result, scale2), Assembler::AVX_512bit); // k7 == 11..11, if operands equal, otherwise k7 has some 0
+        evpcmpeqb(mask, vec1, Address(str2, result, scale2), Assembler::AVX_512bit); // k7 == 11..11, if operands equal, otherwise k7 has some 0
       }
-      kortestql(k7, k7);
+      kortestql(mask, mask);
       jcc(Assembler::aboveEqual, COMPARE_WIDE_VECTORS_LOOP_FAILED);     // miscompare
       addptr(result, stride2x2);  // update since we already compared at this addr
       subl(cnt2, stride2x2);      // and sub the size too
@@ -7148,7 +7201,7 @@ void MacroAssembler::string_compare(Register str1, Register str2,
 
     bind(COMPARE_WIDE_VECTORS_LOOP_FAILED);
 
-    kmovql(cnt1, k7);
+    kmovql(cnt1, mask);
     notq(cnt1);
     bsfq(cnt2, cnt1);
     if (ae != StrIntrinsicNode::LL) {
@@ -7197,7 +7250,7 @@ void MacroAssembler::string_compare(Register str1, Register str2,
 //   }
 void MacroAssembler::has_negatives(Register ary1, Register len,
   Register result, Register tmp1,
-  XMMRegister vec1, XMMRegister vec2) {
+  XMMRegister vec1, XMMRegister vec2, KRegister mask1, KRegister mask2) {
   // rsi: byte array
   // rcx: len
   // rax: result
@@ -7229,8 +7282,8 @@ void MacroAssembler::has_negatives(Register ary1, Register len,
 
     bind(test_64_loop);
     // Check whether our 64 elements of size byte contain negatives
-    evpcmpgtb(k2, vec2, Address(ary1, len, Address::times_1), Assembler::AVX_512bit);
-    kortestql(k2, k2);
+    evpcmpgtb(mask1, vec2, Address(ary1, len, Address::times_1), Assembler::AVX_512bit);
+    kortestql(mask1, mask1);
     jcc(Assembler::notZero, TRUE_LABEL);
 
     addptr(len, 64);
@@ -7247,7 +7300,7 @@ void MacroAssembler::has_negatives(Register ary1, Register len,
     mov64(tmp3_aliased, 0xFFFFFFFFFFFFFFFF);
     shlxq(tmp3_aliased, tmp3_aliased, tmp1);
     notq(tmp3_aliased);
-    kmovql(k3, tmp3_aliased);
+    kmovql(mask2, tmp3_aliased);
 #else
     Label k_init;
     jmp(k_init);
@@ -7272,11 +7325,11 @@ void MacroAssembler::has_negatives(Register ary1, Register len,
     lea(len, InternalAddress(tmp));
     // create mask to test for negative byte inside a vector
     evpbroadcastb(vec1, tmp1, Assembler::AVX_512bit);
-    evpcmpgtb(k3, vec1, Address(len, 0), Assembler::AVX_512bit);
+    evpcmpgtb(mask2, vec1, Address(len, 0), Assembler::AVX_512bit);
 
 #endif
-    evpcmpgtb(k2, k3, vec2, Address(ary1, 0), Assembler::AVX_512bit);
-    ktestq(k2, k3);
+    evpcmpgtb(mask1, mask2, vec2, Address(ary1, 0), Assembler::AVX_512bit);
+    ktestq(mask1, mask2);
     jcc(Assembler::notZero, TRUE_LABEL);
 
     jmp(FALSE_LABEL);
@@ -7403,7 +7456,7 @@ void MacroAssembler::has_negatives(Register ary1, Register len,
 // Compare char[] or byte[] arrays aligned to 4 bytes or substrings.
 void MacroAssembler::arrays_equals(bool is_array_equ, Register ary1, Register ary2,
                                    Register limit, Register result, Register chr,
-                                   XMMRegister vec1, XMMRegister vec2, bool is_char) {
+                                   XMMRegister vec1, XMMRegister vec2, bool is_char, KRegister mask) {
   ShortBranchVerifier sbv(this);
   Label TRUE_LABEL, FALSE_LABEL, DONE, COMPARE_VECTORS, COMPARE_CHAR, COMPARE_BYTE;
 
@@ -7466,8 +7519,8 @@ void MacroAssembler::arrays_equals(bool is_array_equ, Register ary1, Register ar
       bind(COMPARE_WIDE_VECTORS_LOOP_AVX3); // the hottest loop
 
       evmovdquq(vec1, Address(ary1, limit, Address::times_1), Assembler::AVX_512bit);
-      evpcmpeqb(k7, vec1, Address(ary2, limit, Address::times_1), Assembler::AVX_512bit);
-      kortestql(k7, k7);
+      evpcmpeqb(mask, vec1, Address(ary2, limit, Address::times_1), Assembler::AVX_512bit);
+      kortestql(mask, mask);
       jcc(Assembler::aboveEqual, FALSE_LABEL);     // miscompare
       addptr(limit, 64);  // update since we already compared at this addr
       cmpl(limit, -64);
@@ -7484,8 +7537,8 @@ void MacroAssembler::arrays_equals(bool is_array_equ, Register ary1, Register ar
       //
       addptr(result, -64);   // it is safe, bc we just came from this area
       evmovdquq(vec1, Address(ary1, result, Address::times_1), Assembler::AVX_512bit);
-      evpcmpeqb(k7, vec1, Address(ary2, result, Address::times_1), Assembler::AVX_512bit);
-      kortestql(k7, k7);
+      evpcmpeqb(mask, vec1, Address(ary2, result, Address::times_1), Assembler::AVX_512bit);
+      kortestql(mask, mask);
       jcc(Assembler::aboveEqual, FALSE_LABEL);     // miscompare
 
       jmp(TRUE_LABEL);
@@ -10228,7 +10281,7 @@ void MacroAssembler::crc32c_ipl_alg2_alt2(Register in_out, Register in1, Registe
 void MacroAssembler::char_array_compress(Register src, Register dst, Register len,
   XMMRegister tmp1Reg, XMMRegister tmp2Reg,
   XMMRegister tmp3Reg, XMMRegister tmp4Reg,
-  Register tmp5, Register result) {
+  Register tmp5, Register result, KRegister mask1, KRegister mask2) {
   Label copy_chars_loop, return_length, return_zero, done;
 
   // rsi: src
@@ -10280,14 +10333,14 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
     movl(result, 0xFFFFFFFF);
     shlxl(result, result, tmp5);
     notl(result);
-    kmovdl(k3, result);
+    kmovdl(mask2, result);
 
-    evmovdquw(tmp1Reg, k3, Address(src, 0), /*merge*/ false, Assembler::AVX_512bit);
-    evpcmpuw(k2, k3, tmp1Reg, tmp2Reg, Assembler::le, Assembler::AVX_512bit);
-    ktestd(k2, k3);
+    evmovdquw(tmp1Reg, mask2, Address(src, 0), /*merge*/ false, Assembler::AVX_512bit);
+    evpcmpuw(mask1, mask2, tmp1Reg, tmp2Reg, Assembler::le, Assembler::AVX_512bit);
+    ktestd(mask1, mask2);
     jcc(Assembler::carryClear, return_zero);
 
-    evpmovwb(Address(dst, 0), k3, tmp1Reg, Assembler::AVX_512bit);
+    evpmovwb(Address(dst, 0), mask2, tmp1Reg, Assembler::AVX_512bit);
 
     addptr(src, tmp5);
     addptr(src, tmp5);
@@ -10308,8 +10361,8 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
 
     bind(copy_32_loop);
     evmovdquw(tmp1Reg, Address(src, len, Address::times_2), /*merge*/ false, Assembler::AVX_512bit);
-    evpcmpuw(k2, tmp1Reg, tmp2Reg, Assembler::le, Assembler::AVX_512bit);
-    kortestdl(k2, k2);
+    evpcmpuw(mask1, tmp1Reg, tmp2Reg, Assembler::le, Assembler::AVX_512bit);
+    kortestdl(mask1, mask1);
     jcc(Assembler::carryClear, return_zero);
 
     // All elements in current processed chunk are valid candidates for
@@ -10330,14 +10383,14 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
     shlxl(result, result, len);
     notl(result);
 
-    kmovdl(k3, result);
+    kmovdl(mask2, result);
 
-    evmovdquw(tmp1Reg, k3, Address(src, 0), /*merge*/ false, Assembler::AVX_512bit);
-    evpcmpuw(k2, k3, tmp1Reg, tmp2Reg, Assembler::le, Assembler::AVX_512bit);
-    ktestd(k2, k3);
+    evmovdquw(tmp1Reg, mask2, Address(src, 0), /*merge*/ false, Assembler::AVX_512bit);
+    evpcmpuw(mask1, mask2, tmp1Reg, tmp2Reg, Assembler::le, Assembler::AVX_512bit);
+    ktestd(mask1, mask2);
     jcc(Assembler::carryClear, return_zero);
 
-    evpmovwb(Address(dst, 0), k3, tmp1Reg, Assembler::AVX_512bit);
+    evpmovwb(Address(dst, 0), mask2, tmp1Reg, Assembler::AVX_512bit);
     jmp(return_length);
 
     bind(below_threshold);
@@ -10437,7 +10490,7 @@ void MacroAssembler::char_array_compress(Register src, Register dst, Register le
 //     }
 //   }
 void MacroAssembler::byte_array_inflate(Register src, Register dst, Register len,
-  XMMRegister tmp1, Register tmp2) {
+  XMMRegister tmp1, Register tmp2, KRegister mask) {
   Label copy_chars_loop, done, below_threshold, avx3_threshold;
   // rsi: src
   // rdi: dst
@@ -10490,9 +10543,9 @@ void MacroAssembler::byte_array_inflate(Register src, Register dst, Register len
     movl(tmp3_aliased, -1);
     shlxl(tmp3_aliased, tmp3_aliased, tmp2);
     notl(tmp3_aliased);
-    kmovdl(k2, tmp3_aliased);
-    evpmovzxbw(tmp1, k2, Address(src, 0), Assembler::AVX_512bit);
-    evmovdquw(Address(dst, 0), k2, tmp1, /*merge*/ true, Assembler::AVX_512bit);
+    kmovdl(mask, tmp3_aliased);
+    evpmovzxbw(tmp1, mask, Address(src, 0), Assembler::AVX_512bit);
+    evmovdquw(Address(dst, 0), mask, tmp1, /*merge*/ true, Assembler::AVX_512bit);
 
     jmp(done);
     bind(avx3_threshold);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2020, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -987,6 +987,13 @@ void C2_MacroAssembler::reduce8L(int opcode, Register dst, Register src1, XMMReg
   reduce_operation_256(T_LONG, opcode, vtmp2, vtmp2, src2);
   reduce4L(opcode, dst, src1, vtmp2, vtmp1, vtmp2);
 }
+
+void C2_MacroAssembler::genmask(KRegister dst, Register len, Register temp) {
+  // assert(ArrayCopyPartialInlineSize <= 64,"");  FIXME
+  mov64(temp, -1L);
+  bzhiq(temp, temp, len);
+  kmovql(dst, temp);
+}
 #endif // _LP64
 
 void C2_MacroAssembler::reduce2F(int opcode, XMMRegister dst, XMMRegister src, XMMRegister vtmp) {
@@ -1234,7 +1241,8 @@ void C2_MacroAssembler::evpblend(BasicType typ, XMMRegister dst, KRegister kmask
   }
 }
 
-void C2_MacroAssembler::vectortest(int bt, int vlen, XMMRegister src1, XMMRegister src2, XMMRegister vtmp1, XMMRegister vtmp2) {
+void C2_MacroAssembler::vectortest(int bt, int vlen, XMMRegister src1, XMMRegister src2,
+                                   XMMRegister vtmp1, XMMRegister vtmp2, KRegister mask) {
   switch(vlen) {
     case 4:
       assert(vtmp1 != xnoreg, "required.");
@@ -1272,14 +1280,13 @@ void C2_MacroAssembler::vectortest(int bt, int vlen, XMMRegister src1, XMMRegist
       break;
     case 64:
       {
-        KRegister ktemp = k2; // Use a hardcoded temp due to no k register allocation.
         assert((vtmp1 == xnoreg) && (vtmp2 == xnoreg), "required.");
-        evpcmpeqb(ktemp, src1, src2, Assembler::AVX_512bit);
+        evpcmpeqb(mask, src1, src2, Assembler::AVX_512bit);
         if (bt == BoolTest::ne) {
-          ktestql(ktemp, ktemp);
+          ktestql(mask, mask);
         } else {
           assert(bt == BoolTest::overflow, "required");
-          kortestql(ktemp, ktemp);
+          kortestql(mask, mask);
         }
       }
       break;

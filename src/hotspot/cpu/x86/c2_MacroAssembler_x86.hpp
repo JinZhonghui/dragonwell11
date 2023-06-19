@@ -75,7 +75,7 @@ public:
 
   // vector test
   void vectortest(int bt, int vlen, XMMRegister src1, XMMRegister src2,
-                  XMMRegister vtmp1 = xnoreg, XMMRegister vtmp2 = xnoreg);
+                  XMMRegister vtmp1 = xnoreg, XMMRegister vtmp2 = xnoreg, KRegister mask = knoreg);
 
   // blend
   void evpcmp(BasicType typ, KRegister kdmask, KRegister ksmask, XMMRegister src1, AddressLiteral adr, int comparison, int vector_len, Register scratch = rscratch1);
@@ -90,6 +90,7 @@ public:
   void reduceI(int opcode, int vlen, Register dst, Register src1, XMMRegister src2, XMMRegister vtmp1, XMMRegister vtmp2);
 #ifdef _LP64
   void reduceL(int opcode, int vlen, Register dst, Register src1, XMMRegister src2, XMMRegister vtmp1, XMMRegister vtmp2);
+  void genmask(KRegister dst, Register len, Register temp);
 #endif // _LP64
 
   // dst = reduce(op, src2) using vtmp as temps
