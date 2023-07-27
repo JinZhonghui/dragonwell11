@@ -380,6 +380,18 @@ public abstract class LongVector extends AbstractVector<Long> {
     }
 
     /*package-private*/
+    @ForceInline
+    static long rotateLeft(long a, int n) {
+        return Long.rotateLeft(a, n);
+    }
+
+    /*package-private*/
+    @ForceInline
+    static long rotateRight(long a, int n) {
+        return Long.rotateRight(a, n);
+    }
+
+    /*package-private*/
     @Override
     abstract LongSpecies vspecies();
 
@@ -557,12 +569,7 @@ public abstract class LongVector extends AbstractVector<Long> {
                 // This allows the JIT to ignore some ISA details.
                 that = that.lanewise(AND, SHIFT_MASK);
             }
-            if (op == ROR || op == ROL) {  // FIXME: JIT should do this
-                LongVector neg = that.lanewise(NEG);
-                LongVector hi = this.lanewise(LSHL, (op == ROR) ? neg : that);
-                LongVector lo = this.lanewise(LSHR, (op == ROR) ? that : neg);
-                return hi.lanewise(OR, lo);
-            } else if (op == AND_NOT) {
+            if (op == AND_NOT) {
                 // FIXME: Support this in the JIT.
                 that = that.lanewise(NOT);
                 op = AND;
@@ -603,6 +610,10 @@ public abstract class LongVector extends AbstractVector<Long> {
                         v0.bOp(v1, (i, a, n) -> (long)(a >> n));
                 case VECTOR_OP_URSHIFT: return (v0, v1) ->
                         v0.bOp(v1, (i, a, n) -> (long)((a & LSHR_SETUP_MASK) >>> n));
+                case VECTOR_OP_LROTATE: return (v0, v1) ->
+                        v0.bOp(v1, (i, a, n) -> rotateLeft(a, (int)n));
+                case VECTOR_OP_RROTATE: return (v0, v1) ->
+                        v0.bOp(v1, (i, a, n) -> rotateRight(a, (int)n));
                 default: return null;
                 }}));
     }
@@ -709,11 +720,6 @@ public abstract class LongVector extends AbstractVector<Long> {
         assert(opKind(op, VO_SHIFT));
         // As per shift specification for Java, mask the shift count.
         e &= SHIFT_MASK;
-        if (op == ROR || op == ROL) {  // FIXME: JIT should do this
-            LongVector hi = this.lanewise(LSHL, (op == ROR) ? -e : e);
-            LongVector lo = this.lanewise(LSHR, (op == ROR) ? e : -e);
-            return hi.lanewise(OR, lo);
-        }
         int opc = opCode(op);
         return VectorSupport.broadcastInt(
             opc, getClass(), long.class, length(),
@@ -726,6 +732,10 @@ public abstract class LongVector extends AbstractVector<Long> {
                         v.uOp((i, a) -> (long)(a >> n));
                 case VECTOR_OP_URSHIFT: return (v, n) ->
                         v.uOp((i, a) -> (long)((a & LSHR_SETUP_MASK) >>> n));
+                case VECTOR_OP_LROTATE: return (v, n) ->
+                        v.uOp((i, a) -> rotateLeft(a, (int)n));
+                case VECTOR_OP_RROTATE: return (v, n) ->
+                        v.uOp((i, a) -> rotateRight(a, (int)n));
                 default: return null;
                 }}));
     }

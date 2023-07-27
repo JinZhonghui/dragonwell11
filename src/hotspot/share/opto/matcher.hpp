@@ -43,6 +43,12 @@ class Matcher : public PhaseTransform {
 
 public:
 
+
+  // Does the CPU supports vector constant rotate instructions?
+  static bool supports_vector_constant_rotates(int shift) {
+    return -0x80 <= shift && shift < 0x80;
+  }
+
   // State and MStack class used in xform() and find_shared() iterative methods.
   enum Node_State { Pre_Visit,  // node has to be pre-visited
                     Visit,  // visit node
